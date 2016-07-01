@@ -191,6 +191,7 @@ static void get_mounted_paths(void)
 		path = find_controller_path(c);
 		if (!path)
 			continue;
+		mysyslog(LOG_DEBUG, "controller %s is mounted at %s\n", c->name, path);
 		while (c) {
 			c->mount_path = path;
 			c = c->next;
@@ -327,8 +328,14 @@ static bool fill_in_init_paths(void)
 		}
 		prune_init_scope(ip);
 		for (c = controllers[id]; c; c = c->next) {
-			if (strcmp(c->name, "name=systemd") == 0)
+			if (strcmp(c->name, "name=systemd") == 0) {
+				mysyslog(LOG_DEBUG, "fill_in_init_paths: controller is name=systemd\n");
 				c->systemd_created = strcmp(ip, c->cur_path) != 0;
+				if (c->systemd_created)
+					mysyslog(LOG_DEBUG, "c->systemd_created is true.(ip:%s,c->cur_path:%s)\n", ip, c->cur_path);
+				else
+					mysyslog(LOG_DEBUG, "c->systemd_created is false.(ip:%s,c->cur_path:%s)\n", ip, c->cur_path);
+			}
 			c->init_path = ip;
 		}
 	}
@@ -348,6 +355,7 @@ static void print_found_controllers(void) {
 		c = controllers[i];
 		if (!c) {
 			fprintf(stderr, "Nothing in controller %d\n", i);
+			mysyslog(LOG_DEBUG, "Nothing in controller %d\n", i);
 			continue;
 		}
 		fprintf(stderr, "Controller %d:\n", i);
@@ -356,6 +364,10 @@ static void print_found_controllers(void) {
 			fprintf(stderr, "             mount path %s\n", c->mount_path ? c->mount_path : "(none)");
 			fprintf(stderr, "             init task path %s\n", c->init_path);
 			fprintf(stderr, "             login task path %s\n", c->cur_path);
+			mysyslog(LOG_DEBUG, " Next mount: index %d name %s\n", c->id, c->name);
+			mysyslog(LOG_DEBUG, "             mount path %s\n", c->mount_path ? c->mount_path : "(none)");
+			mysyslog(LOG_DEBUG, "             init task path %s\n", c->init_path);
+			mysyslog(LOG_DEBUG, "             login task path %s\n", c->cur_path);
 			c = c->next;
 		}
 	}
@@ -394,8 +406,10 @@ static bool get_active_controllers(void)
 			free(line);
 			return false;
 		}
-		for (tok = strtok(subsystems, ","); tok; tok = strtok(NULL, ","))
+		for (tok = strtok(subsystems, ","); tok; tok = strtok(NULL, ",")) {
 			add_controller(id, tok, cur_path);
+			mysyslog(LOG_DEBUG, "controller %s is active.\n", tok);
+		}
 		free(subsystems);
 		free(cur_path);
 	}
@@ -409,7 +423,9 @@ static bool get_active_controllers(void)
 		return false;
 	}
 
+#if 0
 	print_found_controllers();
+#endif
 
 	initialized = true;
 
@@ -549,10 +565,12 @@ static bool handle_systemd_create(struct controller *c, uid_t uid, gid_t gid)
 		return false;
 
 	user_path = must_strcat(c->mount_path, c->cur_path, NULL);
+	mysyslog(LOG_DEBUG, "handle_systemd_create: user_path is %s\n", user_path);
 
 	// Is this actually our cgroup, or was it created for someone
 	// else?
 	if (!systemd_created_slice_for_us(c, user_path, uid)) {
+		mysyslog(LOG_DEBUG, "handle_systemd_create: this is created for someone else\n", user_path);
 		c->systemd_created = false;
 		free(user_path);
 		return false;
@@ -562,6 +580,7 @@ static bool handle_systemd_create(struct controller *c, uid_t uid, gid_t gid)
 	if (chown(user_path, uid, gid) < 0)
 		mysyslog(LOG_WARNING, "Failed to chown %s to %d:%d: %m\n",
 				user_path, (int)uid, (int)gid);
+	mysyslog(LOG_DEBUG, "chown %s to %d:%d: %m\n", user_path, (int)uid, (int)gid);
 	free(user_path);
 	return true;
 }
@@ -579,6 +598,7 @@ static bool cgfs_create_forone(struct controller *c, uid_t uid, gid_t gid, const
 #if DEBUG
 		fprintf(stderr, "Creating %s for %s\n", path, c->name);
 #endif
+		mysyslog(LOG_DEBUG, "Creating %s for %s\n", path, c->name);
 		if (exists(path)) {
 			free(path);
 			*existed = true;
@@ -592,10 +612,13 @@ static bool cgfs_create_forone(struct controller *c, uid_t uid, gid_t gid, const
 #if DEBUG
 		fprintf(stderr, "Creating %s %s\n", path, pass ? "succeeded" : "failed");
 #endif
+		mysyslog(LOG_DEBUG, "Creating %s %s\n", path, pass ? "succeeded" : "failed");
 		if (pass) {
 			if (chown(path, uid, gid) < 0)
 				mysyslog(LOG_WARNING, "Failed to chown %s to %d:%d: %m\n",
 					path, (int)uid, (int)gid);
+			mysyslog(LOG_DEBUG, "chown %s to %d:%d\n",
+				 path, (int)uid, (int)gid);
 		}
 		free(path);
 		if (pass)
@@ -705,20 +728,26 @@ static bool do_enter(struct controller *c, const char *cg)
 		if (!c->mount_path || !c->init_path)
 			goto next;
 		path = must_strcat(c->mount_path, c->init_path, cg, "/cgroup.procs", NULL);
+		mysyslog(LOG_DEBUG, "do_enter: path is %s", path);
 		if (!exists(path)) {
+			mysyslog(LOG_DEBUG, "do_enter: %s is exists.", path);
 			free(path);
 			path = must_strcat(c->mount_path, c->init_path, cg, "/tasks", NULL);
+			mysyslog(LOG_DEBUG, "do_enter: path is %s", path);
 		}
 #if DEBUG
 		fprintf(stderr, "Attempting to enter %s:%s using %s\n", c->name, cg, path);
 #endif
+		mysyslog(LOG_DEBUG, "Attempting to enter %s:%s using %s\n", c->name, cg, path);
 		pass = write_int(path, (int)getpid());
 		free(path);
-		if (pass) /* only have to enter one of the comounts */
+		if (pass) {/* only have to enter one of the comounts */
+			mysyslog(LOG_DEBUG, "Writing pid(%d) was successful.", (int)getpid());
 			return true;
+		}
 #if DEBUG
 		if (!pass)
-			fprintf(stderr, "Failed to enter %s:%s\n", c->name, cg);
+			fprintf(stderr, "Failed to enter %s:%s: %m\n", c->name, cg);
 #endif
 next:
 		c = c->next;
@@ -827,12 +856,14 @@ int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
 
 	if (argc > 1 && strcmp(argv[0], "-c") == 0)
 		filter_controllers(argv[1]);
+	print_found_controllers();
 
 	ret = pam_get_user(pamh, &PAM_user, NULL);
 	if (ret != PAM_SUCCESS) {
 		mysyslog(LOG_ERR, "PAM-CGFS: couldn't get user\n");
 		return PAM_SESSION_ERR;
 	}
+	mysyslog(LOG_DEBUG, "PAM_user is %s\n", PAM_user);
 
 	ret = handle_login(PAM_user);
 	return ret;

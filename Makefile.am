@@ -54,7 +54,7 @@ pam_cgfs_la_SOURCES = pam/pam_cgfs.c
 pam_cgfs_la_CFLAGS = $(AM_CFLAGS)
 pam_cgfs_la_LIBADD = $(AM_LIBS) $(PAM_LIBS) -L$(top_srcdir)
 pam_cgfs_la_LDFLAGS = $(AM_LDFLAGS) -module -avoid-version -shared
-#pam_cgfs_la_CFLAGS += -DDEBUG
+pam_cgfs_la_CFLAGS += -DDEBUG
 
 install-data-hook:     install-pamLTLIBRARIES
 	rm -f "$(DESTDIR)$(pamdir)/pam_cgfs.la"
